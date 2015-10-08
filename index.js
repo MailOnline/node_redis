@@ -35,6 +35,13 @@ parsers.push(require('./lib/parsers/javascript'));
 function RedisClient(stream, options) {
     options = options || {};
 
+    if (!stream.cork) {
+        stream.cork = function noop() {};
+        stream.uncork = function noop() {};
+        stream.__write = stream.write;
+        stream.write = this.writeStream.bind(this);
+    }
+
     this.stream = stream;
     this.options = options;
 
@@ -775,6 +782,25 @@ RedisClient.prototype.send_command = function (command, args, callback) {
         this.should_buffer = true;
     }
     return !this.should_buffer;
+};
+
+RedisClient.prototype.writeStream = function (data) {
+    var nr = 0;
+
+    // Do not use a pipeline
+    if (this.pipeline === 0) {
+        return !this.stream.__write(data);
+    }
+    this.pipeline--;
+    this.pipeline_queue.push(data);
+    if (this.pipeline === 0) {
+        var len = this.pipeline_queue.length;
+        while (len--) {
+            nr += !this.stream.__write(this.pipeline_queue.shift());
+        }
+        return !nr;
+    }
+    return true;
 };
 
 RedisClient.prototype.pub_sub_command = function (command_obj) {
